@@ -18,15 +18,139 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 3. 配置 Gradle 8.7 编译工具
+      - name: 3. 自动检查并修复项目配置与目录结构
+        run: |
+          mkdir -p app/src/main/java/io/libretivi/app
+          FOUND_KT=$(find . -name "MainActivity.kt" | head -n 1)
+          if [ -n "$FOUND_KT" ] && [ "$FOUND_KT" != "./app/src/main/java/io/libretivi/app/MainActivity.kt" ]; then
+            cp "$FOUND_KT" app/src/main/java/io/libretivi/app/MainActivity.kt
+          fi
+
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "LibreTivi"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.5.0" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "io.libretivi.app"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "io.libretivi.app"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 132
+                  versionName = "1.3.2-ProFree"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+              lint {
+                  disable += "UnsafeOptInUsageError"
+                  checkReleaseBuilds = false
+                  abortOnError = false
+              }
+          }
+
+          dependencies {
+              val media3Version = "1.4.1"
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.annotation:annotation:1.8.0")
+              implementation("androidx.media3:media3-exoplayer:$media3Version")
+              implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
+              implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
+              implementation("androidx.media3:media3-exoplayer-rtsp:$media3Version")
+              implementation("androidx.media3:media3-datasource-rtmp:$media3Version")
+              implementation("androidx.media3:media3-ui:$media3Version")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+              implementation("org.nanohttpd:nanohttpd:2.3.1")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-feature android:name="android.software.leanback" android:required="false" />
+              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+              <application
+                  android:allowBackup="true"
+                  android:label="TiviMini Free"
+                  android:usesCleartextTraffic="true"
+                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+                  <activity
+                      android:name=".MainActivity"
+                      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+                      android:exported="true"
+                      android:launchMode="singleTask"
+                      android:screenOrientation="sensorLandscape">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+      - name: 4. 配置 Gradle 8.7 编译工具
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: 4. 编译生成可安装的 APK
-        run: gradle assembleDebug
+      - name: 5. 编译生成可安装的 APK
+        run: gradle assembleDebug --stacktrace
 
-      - name: 5. 上传 APK 到下载区
+      - name: 6. 上传 APK 到下载区
         uses: actions/upload-artifact@v4
         with:
           name: TiviMini-Free-APK
