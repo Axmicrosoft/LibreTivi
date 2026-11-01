@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: 1. 拉取仓库代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 2. 安装 JDK 17 环境
         uses: actions/setup-java@v5
@@ -330,89 +330,4 @@ jobs:
                       setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
                       typeface = Typeface.MONOSPACE
                       setPadding(dp(16), dp(8), dp(16), dp(8))
-                      setBackgroundColor(Color.parseColor("#CC0E151E"))
-                      visibility = View.GONE
-                  }
-                  root.addView(numInputToast, FrameLayout.LayoutParams(
-                      ViewGroup.LayoutParams.WRAP_CONTENT,
-                      ViewGroup.LayoutParams.WRAP_CONTENT,
-                      Gravity.TOP or Gravity.END
-                  ).apply { setMargins(dp(24), dp(24), dp(24), dp(24)) })
-
-                  surfaceView.setOnClickListener {
-                      if (drawerLayout.visibility == View.VISIBLE) drawerLayout.visibility = View.GONE else showOsd()
-                  }
-                  surfaceView.setOnLongClickListener {
-                      toggleDrawer()
-                      true
-                  }
-                  setContentView(root)
-              }
-
-              private fun initPlayer() {
-                  player?.release()
-                  val loadControl = DefaultLoadControl.Builder()
-                      .setBufferDurationsMs(8000, 20000, 150, 500)
-                      .setPrioritizeTimeOverSizeThresholds(true)
-                      .build()
-
-                  val renderersFactory = DefaultRenderersFactory(this)
-                      .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-                      .setEnableDecoderFallback(true)
-
-                  val httpFactory = DefaultHttpDataSource.Factory()
-                      .setUserAgent(customUa)
-                      .setAllowCrossProtocolRedirects(true)
-
-                  val mediaSourceFactory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, httpFactory))
-
-                  player = ExoPlayer.Builder(this, renderersFactory)
-                      .setMediaSourceFactory(mediaSourceFactory)
-                      .setLoadControl(loadControl)
-                      .build().apply {
-                          setVideoSurfaceView(surfaceView)
-                          addListener(object : Player.Listener {
-                              override fun onRenderedFirstFrame() {
-                                  firstFrameMs = SystemClock.elapsedRealtime() - switchStartTimestamp
-                                  updateOsdInfo()
-                              }
-                              override fun onVideoSizeChanged(videoSize: VideoSize) {
-                                  updateOsdInfo()
-                              }
-                              override fun onPlayerError(error: PlaybackException) {
-                                  val ch = allChannels.getOrNull(currentChannelIndex)
-                                  if (ch != null && ch.lines.size > 1) {
-                                      ch.preferredLineIndex = (ch.preferredLineIndex + 1) % ch.lines.size
-                                      playChannel(ch)
-                                  } else {
-                                      osdBenchmark.text = "播放失败 (${error.errorCodeName}) \vert{} 局域网配源: ${getLanUrl()}"
-                                      showOsd()
-                                  }
-                              }
-                          })
-                      }
-              }
-
-              private fun extractAttr(line: String, attr: String): String? {
-                  val key = "$attr=\""
-                  val start = line.indexOf(key, ignoreCase = true)
-                  if (start == -1) return null
-                  val valStart = start + key.length
-                  val end = line.indexOf('"', valStart)
-                  return if (end != -1) line.substring(valStart, end) else null
-              }
-
-              private fun loadPlaylistText(content: String) {
-                  val t0 = SystemClock.elapsedRealtime()
-                  val channelMap = LinkedHashMap<String, Channel>()
-                  val groupSet = LinkedHashSet<String>().apply { add("全部频道") }
-                  var currentGroupTitle = "默认分组"
-                  var pendingName = ""
-
-                  content.lineSequence().forEach { rawLine ->
-                      val line = rawLine.trim()
-                      if (line.isEmpty()) return@forEach
-                      when {
-                          line.startsWith("#EXTM3U", ignoreCase = true) -> return@forEach
-                          line.startsWith("#EXTINF:", ignoreCase = true) -> {
-                              pendingName = line.substringAfterLast(",", "
+                      setBackgroundColor(Color.parseColor("#
