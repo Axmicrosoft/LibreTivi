@@ -5,29 +5,29 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: 1. 拉取仓库代码
         uses: actions/checkout@v4
 
       - name: 2. 安装 JDK 17 环境
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 3. 自动检查并修复项目配置与目录结构
-        run: |
-          mkdir -p app/src/main/java/io/libretivi/app
-          FOUND_KT=$(find . -name "MainActivity.kt" | head -n 1)
-          if [ -n "$FOUND_KT" ] && [ "$FOUND_KT" != "./app/src/main/java/io/libretivi/app/MainActivity.kt" ]; then
-            cp "$FOUND_KT" app/src/main/java/io/libretivi/app/MainActivity.kt
-          fi
+      - name: 3. 自动生成完整项目源码与配置文件
+        run: python3 - << 'PYEOF'
+          import os, pathlib
 
-          cat << 'EOF' > settings.gradle.kts
-          pluginManagement {
+          os.makedirs("app/src/main/java/io/libretivi/app", exist_ok=True)
+
+          pathlib.Path("settings.gradle.kts").write_text("""pluginManagement {
               repositories {
                   google()
                   mavenCentral()
@@ -43,24 +43,21 @@ jobs:
           }
           rootProject.name = "LibreTivi"
           include(":app")
-          EOF
+          """, encoding="utf-8")
 
-          cat << 'EOF' > build.gradle.kts
-          plugins {
+          pathlib.Path("build.gradle.kts").write_text("""plugins {
               id("com.android.application") version "8.5.0" apply false
               id("org.jetbrains.kotlin.android") version "1.9.24" apply false
           }
-          EOF
+          """, encoding="utf-8")
 
-          cat << 'EOF' > gradle.properties
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          pathlib.Path("gradle.properties").write_text("""org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           kotlin.code.style=official
           android.nonTransitiveRClass=true
-          EOF
+          """, encoding="utf-8")
 
-          cat << 'EOF' > app/build.gradle.kts
-          plugins {
+          pathlib.Path("app/build.gradle.kts").write_text("""plugins {
               id("com.android.application")
               id("org.jetbrains.kotlin.android")
           }
@@ -88,9 +85,9 @@ jobs:
               }
               kotlinOptions {
                   jvmTarget = "17"
+                  freeCompilerArgs = listOf("-opt-in=androidx.media3.common.util.UnstableApi")
               }
               lint {
-                  disable += "UnsafeOptInUsageError"
                   checkReleaseBuilds = false
                   abortOnError = false
               }
@@ -106,13 +103,10 @@ jobs:
               implementation("androidx.media3:media3-exoplayer-rtsp:$media3Version")
               implementation("androidx.media3:media3-datasource-rtmp:$media3Version")
               implementation("androidx.media3:media3-ui:$media3Version")
-              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-              implementation("org.nanohttpd:nanohttpd:2.3.1")
           }
-          EOF
+          """, encoding="utf-8")
 
-          cat << 'EOF' > app/src/main/AndroidManifest.xml
-          <?xml version="1.0" encoding="utf-8"?>
+          pathlib.Path("app/src/main/AndroidManifest.xml").write_text("""<?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -140,7 +134,566 @@ jobs:
                   </activity>
               </application>
           </manifest>
-          EOF
+          """, encoding="utf-8")
+
+          pathlib.Path("app/src/main/java/io/libretivi/app/MainActivity.kt").write_text("""@file:Suppress("DEPRECATION")
+          package io.libretivi.app
+
+          import android.app.Activity
+          import android.content.Context
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
+          import android.net.Uri
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.os.SystemClock
+          import android.text.TextUtils
+          import android.util.TypedValue
+          import android.view.Gravity
+          import android.view.KeyEvent
+          import android.view.SurfaceView
+          import android.view.View
+          import android.view.ViewGroup
+          import android.view.WindowManager
+          import android.widget.ArrayAdapter
+          import android.widget.BaseAdapter
+          import android.widget.FrameLayout
+          import android.widget.LinearLayout
+          import android.widget.ListView
+          import android.widget.TextView
+          import android.widget.Toast
+          import androidx.annotation.OptIn
+          import androidx.media3.common.MediaItem
+          import androidx.media3.common.PlaybackException
+          import androidx.media3.common.Player
+          import androidx.media3.common.VideoSize
+          import androidx.media3.common.util.UnstableApi
+          import androidx.media3.datasource.DefaultDataSource
+          import androidx.media3.datasource.DefaultHttpDataSource
+          import androidx.media3.exoplayer.DefaultLoadControl
+          import androidx.media3.exoplayer.DefaultRenderersFactory
+          import androidx.media3.exoplayer.ExoPlayer
+          import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+          import java.io.BufferedReader
+          import java.io.InputStreamReader
+          import java.net.HttpURLConnection
+          import java.net.Inet4Address
+          import java.net.NetworkInterface
+          import java.net.ServerSocket
+          import java.net.URL
+          import java.net.URLDecoder
+          import java.util.Locale
+          import java.util.zip.GZIPInputStream
+          import kotlin.concurrent.thread
+
+          data class StreamLine(
+              val url: String,
+              val label: String
+          )
+
+          data class Channel(
+              val id: Int,
+              val name: String,
+              val group: String,
+              val lines: MutableList<StreamLine> = mutableListOf(),
+              var preferredLineIndex: Int = 0
+          )
+
+          @OptIn(UnstableApi::class)
+          class MainActivity : Activity() {
+
+              private var player: ExoPlayer? = null
+              private lateinit var surfaceView: SurfaceView
+              private lateinit var drawerLayout: LinearLayout
+              private lateinit var groupListView: ListView
+              private lateinit var channelListView: ListView
+              private lateinit var osdBanner: LinearLayout
+              private lateinit var osdTitle: TextView
+              private lateinit var osdSpecs: TextView
+              private lateinit var osdBenchmark: TextView
+              private lateinit var numInputToast: TextView
+
+              private val allChannels = mutableListOf<Channel>()
+              private val groups = mutableListOf<String>()
+              private var filteredChannels = listOf<Channel>()
+              private var currentGroup = "全部频道"
+              private var currentChannelIndex = 0
+              private var switchStartTimestamp = 0L
+              private var firstFrameMs = 0L
+
+              private var udpxyServer = ""
+              private var customUa = "TiviMini/1.3.2"
+              @Volatile private var serverRunning = true
+              private var serverSocket: ServerSocket? = null
+
+              private val handler = Handler(Looper.getMainLooper())
+              private val numberBuffer = StringBuilder()
+              private val hideOsdRunnable = Runnable { osdBanner.visibility = View.GONE }
+              private val confirmNumberRunnable = Runnable {
+                  val num = numberBuffer.toString().toIntOrNull()
+                  numberBuffer.clear()
+                  numInputToast.visibility = View.GONE
+                  if (num != null && num in 1..allChannels.size) {
+                      playChannel(allChannels[num - 1])
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+                  val prefs = getSharedPreferences("tivimini_free", Context.MODE_PRIVATE)
+                  udpxyServer = prefs.getString("udpxy", "") ?: ""
+
+                  setupUi()
+                  initPlayer()
+                  startLanWebServer()
+
+                  val savedM3u = prefs.getString("playlist_content", null)
+                  if (!savedM3u.isNullOrBlank()) {
+                      loadPlaylistText(savedM3u)
+                  } else {
+                      loadPlaylistText(DEFAULT_DEMO_PLAYLIST)
+                  }
+              }
+
+              private fun setupUi() {
+                  val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+                  surfaceView = SurfaceView(this)
+                  root.addView(surfaceView, FrameLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT,
+                      ViewGroup.LayoutParams.MATCH_PARENT,
+                      Gravity.CENTER
+                  ))
+
+                  drawerLayout = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      setBackgroundColor(Color.parseColor("#CC0E151E"))
+                      visibility = View.GONE
+                  }
+                  groupListView = ListView(this).apply {
+                      divider = null
+                      setBackgroundColor(Color.parseColor("#E6141E2B"))
+                  }
+                  channelListView = ListView(this).apply { divider = null }
+
+                  drawerLayout.addView(groupListView, LinearLayout.LayoutParams(dp(180), ViewGroup.LayoutParams.MATCH_PARENT))
+                  drawerLayout.addView(channelListView, LinearLayout.LayoutParams(dp(300), ViewGroup.LayoutParams.MATCH_PARENT))
+                  root.addView(drawerLayout, FrameLayout.LayoutParams(
+                      ViewGroup.LayoutParams.WRAP_CONTENT,
+                      ViewGroup.LayoutParams.MATCH_PARENT,
+                      Gravity.START
+                  ))
+
+                  osdBanner = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(20), dp(14), dp(20), dp(14))
+                      background = GradientDrawable().apply {
+                          setColor(Color.parseColor("#D9101824"))
+                          cornerRadius = dp(12).toFloat()
+                          setStroke(dp(1), Color.parseColor("#334FC3F7"))
+                      }
+                  }
+                  osdTitle = TextView(this).apply {
+                      setTextColor(Color.WHITE)
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+                      typeface = Typeface.DEFAULT_BOLD
+                  }
+                  osdSpecs = TextView(this).apply {
+                      setTextColor(Color.parseColor("#4FC3F7"))
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                  }
+                  osdBenchmark = TextView(this).apply {
+                      setTextColor(Color.parseColor("#9BE0FF"))
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                  }
+                  osdBanner.addView(osdTitle)
+                  osdBanner.addView(osdSpecs)
+                  osdBanner.addView(osdBenchmark)
+
+                  root.addView(osdBanner, FrameLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT,
+                      ViewGroup.LayoutParams.WRAP_CONTENT,
+                      Gravity.BOTTOM
+                  ).apply { setMargins(dp(24), dp(24), dp(24), dp(24)) })
+
+                  numInputToast = TextView(this).apply {
+                      setTextColor(Color.parseColor("#4FC3F7"))
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
+                      typeface = Typeface.MONOSPACE
+                      setPadding(dp(16), dp(8), dp(16), dp(8))
+                      setBackgroundColor(Color.parseColor("#CC0E151E"))
+                      visibility = View.GONE
+                  }
+                  root.addView(numInputToast, FrameLayout.LayoutParams(
+                      ViewGroup.LayoutParams.WRAP_CONTENT,
+                      ViewGroup.LayoutParams.WRAP_CONTENT,
+                      Gravity.TOP or Gravity.END
+                  ).apply { setMargins(dp(24), dp(24), dp(24), dp(24)) })
+
+                  surfaceView.setOnClickListener {
+                      if (drawerLayout.visibility == View.VISIBLE) drawerLayout.visibility = View.GONE else showOsd()
+                  }
+                  surfaceView.setOnLongClickListener {
+                      toggleDrawer()
+                      true
+                  }
+                  setContentView(root)
+              }
+
+              private fun initPlayer() {
+                  player?.release()
+                  val loadControl = DefaultLoadControl.Builder()
+                      .setBufferDurationsMs(8000, 20000, 150, 500)
+                      .setPrioritizeTimeOverSizeThresholds(true)
+                      .build()
+
+                  val renderersFactory = DefaultRenderersFactory(this)
+                      .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+                      .setEnableDecoderFallback(true)
+
+                  val httpFactory = DefaultHttpDataSource.Factory()
+                      .setUserAgent(customUa)
+                      .setAllowCrossProtocolRedirects(true)
+
+                  val mediaSourceFactory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, httpFactory))
+
+                  player = ExoPlayer.Builder(this, renderersFactory)
+                      .setMediaSourceFactory(mediaSourceFactory)
+                      .setLoadControl(loadControl)
+                      .build().apply {
+                          setVideoSurfaceView(surfaceView)
+                          addListener(object : Player.Listener {
+                              override fun onRenderedFirstFrame() {
+                                  firstFrameMs = SystemClock.elapsedRealtime() - switchStartTimestamp
+                                  updateOsdInfo()
+                              }
+                              override fun onVideoSizeChanged(videoSize: VideoSize) {
+                                  updateOsdInfo()
+                              }
+                              override fun onPlayerError(error: PlaybackException) {
+                                  val ch = allChannels.getOrNull(currentChannelIndex)
+                                  if (ch != null && ch.lines.size > 1) {
+                                      ch.preferredLineIndex = (ch.preferredLineIndex + 1) % ch.lines.size
+                                      playChannel(ch)
+                                  } else {
+                                      osdBenchmark.text = "播放失败 (${error.errorCodeName}) | 局域网配源: ${getLanUrl()}"
+                                      showOsd()
+                                  }
+                              }
+                          })
+                      }
+              }
+
+              private fun loadPlaylistText(content: String) {
+                  val t0 = SystemClock.elapsedRealtime()
+                  val channelMap = LinkedHashMap<String, Channel>()
+                  val groupSet = LinkedHashSet<String>().apply { add("全部频道") }
+                  var currentGroupTitle = "默认分组"
+                  var pendingName = ""
+
+                  content.lineSequence().forEach { rawLine ->
+                      val line = rawLine.trim()
+                      if (line.isEmpty()) return@forEach
+                      when {
+                          line.startsWith("#EXTM3U", ignoreCase = true) -> return@forEach
+                          line.startsWith("#EXTINF:", ignoreCase = true) -> {
+                              pendingName = line.substringAfterLast(",", "未知频道").trim()
+                              currentGroupTitle = Regex("group-title=\\"([^\\"]+)\\"").find(line)?.groupValues?.get(1) ?: "默认分组"
+                          }
+                          line.contains(",#genre#", ignoreCase = true) -> {
+                              currentGroupTitle = line.substringBefore(",#genre#").trim()
+                          }
+                          !line.startsWith("#") -> {
+                              val name: String
+                              val url: String
+                              if (pendingName.isNotEmpty()) {
+                                  name = pendingName
+                                  url = line
+                                  pendingName = ""
+                              } else if (line.contains(",")) {
+                                  name = line.substringBefore(",").trim()
+                                  url = line.substringAfter(",").trim()
+                              } else return@forEach
+
+                              groupSet.add(currentGroupTitle)
+                              val normKey = name.uppercase(Locale.ROOT).replace(" ", "").replace("-", "").replace("HD", "")
+                              val ch = channelMap.getOrPut(normKey) {
+                                  Channel(channelMap.size + 1, name, currentGroupTitle)
+                              }
+                              ch.lines.add(StreamLine(url, detectProtocolLabel(url)))
+                          }
+                      }
+                  }
+
+                  val parseMs = SystemClock.elapsedRealtime() - t0
+                  allChannels.clear()
+                  allChannels.addAll(channelMap.values)
+                  groups.clear()
+                  groups.addAll(groupSet)
+                  refreshDrawerLists()
+                  if (allChannels.isNotEmpty()) {
+                      playChannel(allChannels[0])
+                      Toast.makeText(this, "已加载 ${allChannels.size} 个频道 (${parseMs}ms) | 后台: ${getLanUrl()}", Toast.LENGTH_LONG).show()
+                  }
+              }
+
+              private fun detectProtocolLabel(url: String): String {
+                  val u = url.lowercase(Locale.ROOT)
+                  return when {
+                      u.startsWith("rtp://") || u.startsWith("udp://") -> "UDP/RTP组播"
+                      u.startsWith("rtsp://") -> "RTSP"
+                      u.startsWith("rtmp://") -> "RTMP"
+                      u.contains(".m3u8") -> "HLS"
+                      else -> "HTTP-TS"
+                  }
+              }
+
+              private fun rewriteStreamUrl(rawUrl: String): String {
+                  if (udpxyServer.isNotBlank() && (rawUrl.startsWith("rtp://") || rawUrl.startsWith("udp://"))) {
+                      val proto = if (rawUrl.startsWith("rtp://")) "rtp" else "udp"
+                      val addr = rawUrl.substringAfter("://").substringBefore("?")
+                      return "${udpxyServer.trimEnd('/')}/$proto/$addr"
+                  }
+                  return rawUrl
+              }
+
+              private fun playChannel(channel: Channel) {
+                  val idx = allChannels.indexOf(channel)
+                  if (idx >= 0) currentChannelIndex = idx
+                  if (channel.lines.isEmpty()) return
+                  val line = channel.lines[channel.preferredLineIndex.coerceIn(0, channel.lines.size - 1)]
+                  switchStartTimestamp = SystemClock.elapsedRealtime()
+                  firstFrameMs = 0L
+
+                  player?.apply {
+                      stop()
+                      setMediaItem(MediaItem.fromUri(Uri.parse(rewriteStreamUrl(line.url))))
+                      prepare()
+                      playWhenReady = true
+                  }
+                  updateOsdInfo()
+                  showOsd()
+              }
+
+              private fun updateOsdInfo() {
+                  val ch = allChannels.getOrNull(currentChannelIndex) ?: return
+                  val line = ch.lines.getOrNull(ch.preferredLineIndex) ?: return
+                  val vf = player?.videoFormat
+                  val res = if (vf != null && vf.width > 0) "${vf.width}x${vf.height}" else "解析中"
+                  osdTitle.text = "${ch.id}. ${ch.name}  [线路 ${ch.preferredLineIndex + 1}/${ch.lines.size}: ${line.label}]"
+                  osdSpecs.text = "分组: ${ch.group} | 分辨率: $res | MediaCodec 硬解"
+                  osdBenchmark.text = if (firstFrameMs > 0) {
+                      "起播耗时: ${firstFrameMs} ms | 上下键切台 · 左右键切源 · OK键列表 · 配源: ${getLanUrl()}"
+                  } else {
+                      "正在极速缓冲... | 手机/电脑浏览器访问 ${getLanUrl()} 导入直播源"
+                  }
+              }
+
+              private fun showOsd() {
+                  osdBanner.visibility = View.VISIBLE
+                  handler.removeCallbacks(hideOsdRunnable)
+                  handler.postDelayed(hideOsdRunnable, 5000)
+              }
+
+              private fun toggleDrawer() {
+                  drawerLayout.visibility = if (drawerLayout.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+              }
+
+              private fun refreshDrawerLists() {
+                  groupListView.adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, groups) {
+                      override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                          return (super.getView(position, convertView, parent) as TextView).apply {
+                              setTextColor(if (groups[position] == currentGroup) Color.parseColor("#4FC3F7") else Color.WHITE)
+                          }
+                      }
+                  }
+                  filterChannelsByGroup(currentGroup)
+                  groupListView.setOnItemClickListener { _, _, pos, _ ->
+                      currentGroup = groups[pos]
+                      filterChannelsByGroup(currentGroup)
+                      (groupListView.adapter as BaseAdapter).notifyDataSetChanged()
+                  }
+                  channelListView.setOnItemClickListener { _, _, pos, _ ->
+                      playChannel(filteredChannels[pos])
+                      drawerLayout.visibility = View.GONE
+                  }
+              }
+
+              private fun filterChannelsByGroup(group: String) {
+                  filteredChannels = if (group == "全部频道") allChannels else allChannels.filter { it.group == group }
+                  channelListView.adapter = object : ArrayAdapter<Channel>(this, android.R.layout.simple_list_item_1, filteredChannels) {
+                      override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                          return (super.getView(position, convertView, parent) as TextView).apply {
+                              val item = filteredChannels[position]
+                              text = "${item.id}. ${item.name} (${item.lines.size}源)"
+                              setTextColor(Color.WHITE)
+                              ellipsize = TextUtils.TruncateAt.END
+                              maxLines = 1
+                          }
+                      }
+                  }
+              }
+
+              override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+                  if (drawerLayout.visibility == View.VISIBLE && keyCode == KeyEvent.KEYCODE_BACK) {
+                      drawerLayout.visibility = View.GONE
+                      return true
+                  }
+                  when (keyCode) {
+                      KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { toggleDrawer(); return true }
+                      KeyEvent.KEYCODE_DPAD_UP -> {
+                          if (allChannels.isNotEmpty()) {
+                              currentChannelIndex = (currentChannelIndex - 1 + allChannels.size) % allChannels.size
+                              playChannel(allChannels[currentChannelIndex])
+                          }
+                          return true
+                      }
+                      KeyEvent.KEYCODE_DPAD_DOWN -> {
+                          if (allChannels.isNotEmpty()) {
+                              currentChannelIndex = (currentChannelIndex + 1) % allChannels.size
+                              playChannel(allChannels[currentChannelIndex])
+                          }
+                          return true
+                      }
+                      KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                          val ch = allChannels.getOrNull(currentChannelIndex)
+                          if (ch != null && ch.lines.size > 1) {
+                              ch.preferredLineIndex = (ch.preferredLineIndex + 1) % ch.lines.size
+                              playChannel(ch)
+                          } else showOsd()
+                          return true
+                      }
+                      KeyEvent.KEYCODE_DPAD_LEFT -> {
+                          val ch = allChannels.getOrNull(currentChannelIndex)
+                          if (ch != null && ch.lines.size > 1) {
+                              ch.preferredLineIndex = (ch.preferredLineIndex - 1 + ch.lines.size) % ch.lines.size
+                              playChannel(ch)
+                          } else showOsd()
+                          return true
+                      }
+                      in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> {
+                          numberBuffer.append(keyCode - KeyEvent.KEYCODE_0)
+                          numInputToast.text = numberBuffer.toString()
+                          numInputToast.visibility = View.VISIBLE
+                          handler.removeCallbacks(confirmNumberRunnable)
+                          handler.postDelayed(confirmNumberRunnable, 1500)
+                          return true
+                      }
+                  }
+                  return super.onKeyDown(keyCode, event)
+              }
+
+              private fun startLanWebServer() {
+                  thread(isDaemon = true) {
+                      try {
+                          val server = ServerSocket(18888)
+                          serverSocket = server
+                          while (serverRunning) {
+                              val client = server.accept()
+                              thread(isDaemon = true) {
+                                  try {
+                                      val reader = BufferedReader(InputStreamReader(client.getInputStream(), Charsets.UTF_8))
+                                      val reqLine = reader.readLine() ?: return@thread
+                                      var contentLength = 0
+                                      var headerLine = reader.readLine()
+                                      while (!headerLine.isNullOrEmpty()) {
+                                          if (headerLine.lowercase(Locale.ROOT).startsWith("content-length:")) {
+                                              contentLength = headerLine.substringAfter(":").trim().toIntOrNull() ?: 0
+                                          }
+                                          headerLine = reader.readLine()
+                                      }
+                                      if (reqLine.startsWith("POST") && contentLength > 0) {
+                                          val buf = CharArray(contentLength)
+                                          var read = 0
+                                          while (read < contentLength) {
+                                              val r = reader.read(buf, read, contentLength - read)
+                                              if (r == -1) break
+                                              read += r
+                                          }
+                                          val body = String(buf, 0, read)
+                                          val params = body.split("&").associate {
+                                              val parts = it.split("=", limit = 2)
+                                              val k = URLDecoder.decode(parts[0], "UTF-8")
+                                              val v = if (parts.size > 1) URLDecoder.decode(parts[1], "UTF-8") else ""
+                                              k to v
+                                          }
+                                          val m3uUrl = params["url"]?.trim() ?: ""
+                                          val m3uText = params["text"]?.trim() ?: ""
+                                          val udpxy = params["udpxy"]?.trim() ?: ""
+                                          val prefs = getSharedPreferences("tivimini_free", Context.MODE_PRIVATE).edit()
+                                          if (udpxy.isNotEmpty()) {
+                                              udpxyServer = udpxy
+                                              prefs.putString("udpxy", udpxy)
+                                          }
+                                          if (m3uText.isNotEmpty()) {
+                                              prefs.putString("playlist_content", m3uText).apply()
+                                              runOnUiThread { loadPlaylistText(m3uText) }
+                                          } else if (m3uUrl.startsWith("http")) {
+                                              thread {
+                                                  try {
+                                                      val conn = URL(m3uUrl).openConnection() as HttpURLConnection
+                                                      val stream = if (m3uUrl.endsWith(".gz")) GZIPInputStream(conn.inputStream) else conn.inputStream
+                                                      val text = BufferedReader(InputStreamReader(stream)).readText()
+                                                      prefs.putString("playlist_content", text).apply()
+                                                      runOnUiThread { loadPlaylistText(text) }
+                                                  } catch (_: Exception) {}
+                                              }
+                                          }
+                                      }
+                                      val html = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>TiviMini Free</title><style>body{background:#0e151e;color:#fff;font-family:sans-serif;max-width:540px;margin:24px auto;padding:0 16px}.card{background:#17212c;padding:20px;border-radius:14px}input,textarea{width:100%;box-sizing:border-box;background:#111a24;color:#fff;border:1px solid #26323f;border-radius:8px;padding:10px;margin:6px 0 14px}button{width:100%;background:#0b8fcf;color:#fff;border:0;border-radius:8px;padding:12px;font-size:16px;font-weight:bold}</style></head><body><h2>TiviMini Free 局域网导入直播源</h2><div class='card'><form method='POST' action='/push'><label>远程 M3U / TXT 链接</label><input name='url' placeholder='https://example.com/list.m3u'><label>udpxy 组播转单播地址 (选填)</label><input name='udpxy' value='$udpxyServer' placeholder='http://192.168.1.1:4022'><label>直接粘贴 M3U 或 #genre# TXT 内容</label><textarea name='text' rows='8' placeholder='#EXTM3U'></textarea><button type='submit'>推送到播放器</button></form></div></body></html>"
+                                      val respBytes = html.toByteArray(Charsets.UTF_8)
+                                      val out = client.getOutputStream()
+                                      out.write("HTTP/1.1 200 OK\\r\\nContent-Type: text/html; charset=utf-8\\r\\nContent-Length: ${respBytes.size}\\r\\nConnection: close\\r\\n\\r\\n".toByteArray())
+                                      out.write(respBytes)
+                                      out.flush()
+                                      client.close()
+                                  } catch (_: Exception) {}
+                              }
+                          }
+                      } catch (_: Exception) {}
+                  }
+              }
+
+              private fun getLanUrl(): String {
+                  try {
+                      val interfaces = NetworkInterface.getNetworkInterfaces()
+                      for (intf in interfaces) {
+                          for (addr in intf.inetAddresses) {
+                              if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                                  return "http://${addr.hostAddress}:18888"
+                              }
+                          }
+                      }
+                  } catch (_: Exception) {}
+                  return "http://127.0.0.1:18888"
+              }
+
+              private fun dp(v: Int): Int =
+                  TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  serverRunning = false
+                  try { serverSocket?.close() } catch (_: Exception) {}
+                  player?.release()
+              }
+
+              companion object {
+                  private val DEFAULT_DEMO_PLAYLIST = \"\"\"
+                      #EXTM3U
+                      #EXTINF:-1 group-title="示例频道",Apple 4K fMP4 测试台
+                      https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8
+                      #EXTINF:-1 group-title="示例频道",Big Buck Bunny 高清测试
+                      https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
+                  \"\"\".trimIndent()
+              }
+          }
+          """, encoding="utf-8")
+          print("All project files generated successfully!")
+          PYEOF
 
       - name: 4. 配置 Gradle 8.7 编译工具
         uses: gradle/actions/setup-gradle@v4
